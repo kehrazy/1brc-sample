@@ -1,6 +1,6 @@
 # 1brc-sample
 
-This is a program for generating sample data for the [`1 Billion Row Challenge`](https://1brc.dev) challenge.
+This is a program for generating sample data for the [1 Billion Row Challenge](https://1brc.dev) challenge.
 
 It utilizes the [OpenMP](https://www.openmp.org/) library to parallelize the generation of the data,
 as well as good strategies for good IO performance to minimize the time it takes to generate the data.
