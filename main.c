@@ -4,6 +4,27 @@
 #include <string.h>
 #include <time.h>
 
+// Configure SIMD usage
+#if defined(__AVX2__)
+#include <immintrin.h>
+#define SIMD_ENABLED 1
+#elif defined(__SSE4_1__)
+#include <smmintrin.h>
+#define SIMD_ENABLED 1
+#elif defined(__ARM_NEON)
+#include <arm_neon.h>
+#define SIMD_ENABLED 1
+#else
+#define SIMD_ENABLED 0
+#endif
+
+#if SIMD_ENABLED
+#define SIMD_ALIGNMENT 32
+#define SIMD_ALIGN __attribute__((aligned(SIMD_ALIGNMENT)))
+#else
+#define SIMD_ALIGN
+#endif
+
 // If Linux, use errno_t for error handling
 #ifndef _WIN32
 #include <errno.h>
@@ -507,7 +528,8 @@ long parse_arguments(int argc, char **argv) {
   long n = strtol(argv[1], NULL, 10);
   if (n <= 0
 #ifndef _WIN32
-      || errno == ERANGE
+      || errno == ERANGE // tail-call seems to not give a shit about this
+                         // anyway, remove it?
 #endif
   ) {
     fprintf(stderr, "Error: Invalid number of measurements. Please provide a "
@@ -597,8 +619,8 @@ void flush_buffer_to_file(FILE *file, char *buffer, size_t buffer_size) {
  * @param total the total number of iterations
  */
 void print_progress(unsigned int current, long total) {
-  const double PERCENT_CONVERSION = 100.0;
-  if (printf("\rProgress: %.1f%%", current * PERCENT_CONVERSION / total) < 0) {
+  if (printf("\rProgress: %luk/%luk", (unsigned long)(current / 1000),
+             (unsigned long)(total / 1000)) < 0) {
     fprintf(stderr, "Error writing to stdout\n");
   }
   fflush(stdout);
@@ -615,8 +637,9 @@ void write_temp_file_to_output(FILE *temp_file, FILE *output_file) {
 
 #pragma omp critical
   {
-    char read_buffer[1024 * 1024]; // 1MB read buffer
+    char read_buffer[MEGABYTE]; // 1MB read buffer
     size_t bytes_read;
+
     while ((bytes_read =
                 fread(read_buffer, 1, sizeof(read_buffer), temp_file)) > 0) {
       fwrite(read_buffer, 1, bytes_read, output_file);
@@ -632,12 +655,10 @@ void write_temp_file_to_output(FILE *temp_file, FILE *output_file) {
  * @param ncities the number of cities
  */
 void generate_measurements(FILE *fh, long n, int ncities) {
-  unsigned int measurements = 0;
 
 #pragma omp parallel
   {
     FILE *thread_fh = open_temp_file();
-    unsigned int thread_measurements = 0;
     char *buffer = allocate_buffer(MEGABYTE);
     size_t buffer_size = 0;
 
@@ -648,15 +669,6 @@ void generate_measurements(FILE *fh, long n, int ncities) {
 
       buffer_size = write_to_buffer(buffer, buffer_size, data[city_index].city,
                                     measurement);
-
-      thread_measurements++;
-
-      if (thread_measurements % 100000 == 0) {
-        flush_buffer_to_file(thread_fh, buffer, buffer_size);
-        buffer_size = 0;
-        print_progress(measurements + thread_measurements, n);
-        thread_measurements = 0;
-      }
     }
 
     flush_buffer_to_file(thread_fh, buffer, buffer_size);
